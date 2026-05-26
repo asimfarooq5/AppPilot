@@ -72,9 +72,9 @@ def _render_flow(safe_name: str, display_name: str, package: str,
 
 
 def _repr_actions(actions: list[dict]) -> str:
-    import json
-    pretty = json.dumps(actions, indent=8)
-    # indent relative to the assignment
+    import pprint
+    pretty = pprint.pformat(actions, indent=4, width=80)
+    # indent relative to the assignment (8 spaces)
     lines = pretty.splitlines()
     result = lines[0]
     for line in lines[1:]:

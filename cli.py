@@ -80,23 +80,30 @@ def select_app(device: str) -> tuple[str, str]:
     """Returns (package, label)."""
     console.print("\n[bold]Fetching installed apps…[/bold]")
     packages = adb.list_packages(device, third_party_only=True)
-    console.print(f"Found [cyan]{len(packages)}[/cyan] third-party apps.\n")
+    console.print(f"Found [cyan]{len(packages)}[/cyan] third-party apps.")
 
-    query = Prompt.ask("Filter by name (or press Enter to see all)").strip().lower()
-    filtered = [p for p in packages if not query or query in p.lower()]
+    # Require a filter — keep asking until results fit on one screen
+    filtered: list[str] = []
+    while True:
+        console.print()
+        query = Prompt.ask("Type app name to filter (e.g. 'slack', 'binance')").strip().lower()
+        if not query:
+            console.print("[yellow]Please type at least part of the app name.[/yellow]")
+            continue
+        filtered = [p for p in packages if query in p.lower()]
+        if not filtered:
+            console.print(f"[yellow]No apps matched '{query}'. Try a shorter word.[/yellow]")
+            continue
+        if len(filtered) > 20:
+            console.print(
+                f"[yellow]{len(filtered)} matches — too many to list. "
+                f"Type more characters to narrow it down.[/yellow]"
+            )
+            continue
+        break
 
-    if not filtered:
-        console.print("[yellow]No apps matched. Showing all.[/yellow]")
-        filtered = packages
-
-    if len(filtered) > 40:
-        console.print(f"[yellow]{len(filtered)} matches — showing first 40. Refine your filter.[/yellow]")
-        filtered = filtered[:40]
-
-    # Build label map (fetching labels is slow; show package names with a hint)
     labels = []
     for p in filtered:
-        # Show only the last two dotted segments for readability
         short = ".".join(p.split(".")[-2:])
         labels.append(f"{p}  [dim]({short})[/dim]")
 
@@ -388,93 +395,102 @@ def run_flows(device: str, package: str, label: str):
 
 def auto_explore(device: str, package: str, label: str):
     """
-    Automatically tap each interactive element on the current screen,
-    record what screen comes next, then go back. Builds a screen map.
+    Tap each interactive element one by one, screenshot the result, go back.
+    Records every action so the flow can be replayed as a real test.
     """
     console.print(f"\n[cyan]Auto-exploring {label}…[/cyan]")
-    console.print("[dim]This will tap every element, go back, and build a screen map.[/dim]")
-    max_depth = int(Prompt.ask("Max depth", default="2"))
+    console.print(
+        "[dim]Will tap each element on the launch screen, screenshot it, "
+        "then press Back — building a replayable flow.[/dim]"
+    )
 
-    adb.launch_app(package, device)
-    visited: dict[frozenset, str] = {}
-    screen_map: list[dict] = []
-
-    _explore_recursive(device, package, depth=0, max_depth=max_depth,
-                       visited=visited, screen_map=screen_map, path=[])
-
-    # Show map
-    console.print()
-    console.rule("[bold]Screen Map[/bold]")
-    t = Table("From", "Action", "To screen type", box=box.SIMPLE)
-    for entry in screen_map:
-        t.add_row(entry["from"], entry["via"], entry["to"])
-    console.print(t)
-
-    if Confirm.ask("\nSave this exploration as a flow?"):
-        _save_exploration(package, screen_map)
-
-
-def _explore_recursive(
-    device: str,
-    package: str,
-    depth: int,
-    max_depth: int,
-    visited: dict,
-    screen_map: list[dict],
-    path: list[str],
-):
-    if depth > max_depth:
-        return
-
-    xml = adb.dump_ui(device)
-    elements = adb.parse_elements(xml)
-    fp = adb.screen_fingerprint(elements)
-    screen_type = guess_screen_type(elements)
-
-    if fp in visited:
-        return
-    visited[fp] = screen_type
-
-    parent_type = path[-1] if path else "Launch"
-    interactive = [e for e in elements if e["clickable"]][:8]  # limit per screen
+    raw = Prompt.ask("Max elements to tap per screen", default="8")
+    try:
+        max_elements = int(raw)
+    except ValueError:
+        max_elements = 8
 
     shot_dir = SCREENSHOT_DIR / "explore"
     shot_dir.mkdir(parents=True, exist_ok=True)
-    shot_path = shot_dir / f"depth{depth}_{screen_type.replace(' ','_')}.png"
-    adb.screencap(shot_path, device)
 
-    console.print(f"[dim]{'  ' * depth}[/dim][cyan]{screen_type}[/cyan]  "
-                  f"[dim]({len(interactive)} elements)[/dim]")
+    console.print(f"\n[cyan]Launching {label}…[/cyan]")
+    adb.launch_app(package, device)
 
-    for el in interactive:
-        console.print(f"[dim]{'  ' * depth}  → tapping '{el['label']}'…[/dim]")
+    xml = adb.dump_ui(device)
+    elements = adb.parse_elements(xml)
+    interactive = [e for e in elements if e["clickable"]]
+
+    # Take a baseline screenshot of the launch screen
+    baseline_shot = shot_dir / "00_launch.png"
+    adb.screencap(baseline_shot, device)
+    screen_type = guess_screen_type(elements)
+
+    console.print()
+    console.print(Panel(
+        f"[bold]{screen_type}[/bold]\n"
+        f"[dim]{len(interactive)} interactive elements found[/dim]",
+        title="[cyan]Launch screen[/cyan]",
+        border_style="cyan",
+    ))
+    console.print(render_elements(elements))
+
+    recorder = FlowRecorder()
+    recorder.screenshot("launch")
+    screen_map: list[dict] = []
+
+    candidates = interactive[:max_elements]
+    console.print(f"[dim]Exploring {len(candidates)} elements…[/dim]\n")
+
+    for i, el in enumerate(candidates, 1):
+        safe_label = el["label"][:20].replace(" ", "_").replace("/", "-")
+        console.print(f"  [dim]{i}/{len(candidates)}[/dim] tapping [cyan]{el['label']!r}[/cyan]…")
+
+        # Record and execute tap
+        recorder.tap(el)
         adb.tap(el["cx"], el["cy"], device)
-        time.sleep(1.5)
+        time.sleep(1.8)
 
+        # Capture result
         new_xml = adb.dump_ui(device)
         new_elements = adb.parse_elements(new_xml)
-        new_fp = adb.screen_fingerprint(new_elements)
         new_type = guess_screen_type(new_elements)
+        new_interactive = [e for e in new_elements if e["clickable"]]
 
-        if new_fp != fp:
-            screen_map.append({
-                "from": screen_type,
-                "via": el["label"],
-                "to": new_type,
-            })
-            _explore_recursive(device, package, depth + 1, max_depth,
-                                visited, screen_map, path + [screen_type])
+        shot_name = f"{i:02d}_{safe_label}"
+        shot_path = shot_dir / f"{shot_name}.png"
+        adb.screencap(shot_path, device)
+        recorder.screenshot(shot_name)
 
+        navigated = (adb.screen_fingerprint(new_elements) !=
+                     adb.screen_fingerprint(elements))
+        nav_text = f"[green]→ navigated to {new_type}[/green]" if navigated else "[dim]screen unchanged[/dim]"
+        console.print(f"    {nav_text}  ({len(new_interactive)} elements)")
+
+        screen_map.append({
+            "element": el["label"],
+            "navigated": navigated,
+            "result_screen": new_type,
+        })
+
+        # Go back to launch screen
+        recorder.back()
         adb.back(device)
-        time.sleep(1)
+        time.sleep(1.2)
 
-
-def _save_exploration(package: str, screen_map: list[dict]):
-    recorder = FlowRecorder()
+    # Show summary table
+    console.print()
+    console.rule("[bold]Exploration Summary[/bold]")
+    t = Table("Element tapped", "Navigated?", "Result screen", box=box.SIMPLE)
     for entry in screen_map:
-        recorder.screenshot(f"explore_{entry['from'].replace(' ','_')}")
-    recorder.save(package, "auto_explore")
-    console.print("[green]Saved as flow 'auto_explore'.[/green]")
+        nav_str = "[green]yes[/green]" if entry["navigated"] else "[dim]no[/dim]"
+        t.add_row(entry["element"], nav_str, entry["result_screen"])
+    console.print(t)
+    console.print(f"\n[dim]Screenshots saved to {shot_dir}[/dim]")
+    console.print(f"[dim]Flow recorded: {len(recorder.actions())} steps[/dim]")
+
+    flow_name = Prompt.ask("\nSave as flow name", default="auto_explore")
+    recorder.save(package, flow_name)
+    console.print(f"[green]Saved flow '{flow_name}' ({len(recorder.actions())} steps).[/green]")
 
 
 # ── Generate tests ────────────────────────────────────────────────────────────

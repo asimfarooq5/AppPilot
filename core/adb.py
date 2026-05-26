@@ -72,9 +72,15 @@ def force_stop(package: str, device: str) -> None:
 
 def launch_app(package: str, device: str) -> None:
     force_stop(package, device)
+    # Collapse notification shade / status bar before launching
+    run("shell", "cmd", "statusbar", "collapse", device=device)
+    time.sleep(0.3)
     run("shell", "monkey", "-p", package, "-c", "android.intent.category.LAUNCHER", "1",
         device=device)
     time.sleep(4)
+    # Collapse again in case a notification appeared during launch
+    run("shell", "cmd", "statusbar", "collapse", device=device)
+    time.sleep(0.5)
 
 
 def back(device: str) -> None:
@@ -138,6 +144,30 @@ def _parse_bounds(bounds_str: str) -> tuple[int, int, int, int]:
     return (int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4)))
 
 
+def _child_label(node) -> str:
+    """
+    For clickable containers that have no own text/desc (React Native pattern),
+    collect text from all descendant TextViews and return it joined.
+    """
+    parts = []
+    for child in node.iter():
+        if child is node:
+            continue
+        t = child.get("text", "").strip()
+        d = child.get("content-desc", "").strip()
+        # skip purely numeric strings (resource-id fallbacks)
+        val = d or t
+        if val and not val.isdigit():
+            parts.append(val)
+    return " · ".join(dict.fromkeys(parts))[:60]  # deduplicated, max 60 chars
+
+
+_SKIP_LABELS = frozenset({
+    "content", "action bar", "status bar", "navigation bar", "decor", "root",
+    "icon", "img", "image",
+})
+
+
 def parse_elements(xml: str) -> list[dict]:
     """Parse UIAutomator XML into a flat list of element dicts."""
     elements = []
@@ -159,11 +189,23 @@ def parse_elements(xml: str) -> list[dict]:
         checked = node.get("checked", "false") == "true"
         bounds_str = node.get("bounds", "")
 
-        # Best display label
-        label = desc or text
-        if not label and res_id:
-            label = res_id.split("/")[-1].replace("_", " ")
-        if not label:
+        # Best display label — collapse whitespace first
+        own_label = " ".join((desc or text).split())
+
+        # For clickable containers with no own label (React Native / custom views):
+        # inherit text from descendant TextViews
+        if not own_label and (clickable or long_clickable):
+            own_label = _child_label(node)
+
+        # Fall back to last segment of resource-id only if it looks human-readable
+        if not own_label and res_id:
+            candidate = res_id.split("/")[-1].replace("_", " ")
+            if not candidate.isdigit():
+                own_label = candidate
+
+        if not own_label:
+            continue
+        if own_label.lower() in _SKIP_LABELS:
             continue
 
         x1, y1, x2, y2 = _parse_bounds(bounds_str)
@@ -175,7 +217,7 @@ def parse_elements(xml: str) -> list[dict]:
             "desc": desc,
             "text": text,
             "resource_id": res_id,
-            "label": label,
+            "label": own_label,
             "clickable": clickable or long_clickable,
             "scrollable": scrollable,
             "checkable": checkable,
