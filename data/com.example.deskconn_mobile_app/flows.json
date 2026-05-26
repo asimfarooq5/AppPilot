@@ -1,0 +1,23 @@
+{
+  "launch_to_desktop": [
+    {
+      "action": "screenshot",
+      "name": "home"
+    },
+    {
+      "action": "tap",
+      "label": "office-pc \u2022 4400",
+      "cx": 720,
+      "cy": 558
+    },
+    {
+      "action": "screenshot",
+      "name": "after_tap"
+    },
+    {
+      "action": "assert",
+      "label": "Back",
+      "present": true
+    }
+  ]
+}

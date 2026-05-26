@@ -1,0 +1,86 @@
+{
+  "auto_explore": [
+    {
+      "action": "screenshot",
+      "name": "launch"
+    },
+    {
+      "action": "tap",
+      "label": "Sign Up/Log In",
+      "cx": 273,
+      "cy": 650
+    },
+    {
+      "action": "screenshot",
+      "name": "01_Sign_Up_Log_In"
+    },
+    {
+      "action": "back"
+    },
+    {
+      "action": "tap",
+      "label": "icon \u00b7 Simple Earn",
+      "cx": 180,
+      "cy": 966
+    },
+    {
+      "action": "screenshot",
+      "name": "02_icon___Simple_Earn"
+    },
+    {
+      "action": "back"
+    },
+    {
+      "action": "tap",
+      "label": "icon \u00b7 Referral",
+      "cx": 540,
+      "cy": 966
+    },
+    {
+      "action": "screenshot",
+      "name": "03_icon___Referral"
+    },
+    {
+      "action": "back"
+    },
+    {
+      "action": "tap",
+      "label": "icon \u00b7 Card",
+      "cx": 900,
+      "cy": 966
+    },
+    {
+      "action": "screenshot",
+      "name": "04_icon___Card"
+    },
+    {
+      "action": "back"
+    },
+    {
+      "action": "tap",
+      "label": "icon \u00b7 Add Funds",
+      "cx": 1260,
+      "cy": 966
+    },
+    {
+      "action": "screenshot",
+      "name": "05_icon___Add_Funds"
+    },
+    {
+      "action": "back"
+    },
+    {
+      "action": "tap",
+      "label": "icon \u00b7 Square",
+      "cx": 180,
+      "cy": 1260
+    },
+    {
+      "action": "screenshot",
+      "name": "06_icon___Square"
+    },
+    {
+      "action": "back"
+    }
+  ]
+}
