@@ -76,43 +76,86 @@ def select_device() -> str:
     return online[idx]["serial"]
 
 
+_PAGE_SIZE = 20
+
+
 def select_app(device: str) -> tuple[str, str]:
     """Returns (package, label)."""
     console.print("\n[bold]Fetching installed apps…[/bold]")
     packages = adb.list_packages(device, third_party_only=True)
-    console.print(f"Found [cyan]{len(packages)}[/cyan] third-party apps.")
+    console.print(
+        f"Found [cyan]{len(packages)}[/cyan] apps.  "
+        f"[dim]Press Enter to browse all  |  type a name to filter[/dim]"
+    )
 
-    # Require a filter — keep asking until results fit on one screen
-    filtered: list[str] = []
+    filtered = packages
+    page = 0
+
     while True:
         console.print()
-        query = Prompt.ask("Type app name to filter (e.g. 'slack', 'binance')").strip().lower()
-        if not query:
-            console.print("[yellow]Please type at least part of the app name.[/yellow]")
-            continue
-        filtered = [p for p in packages if query in p.lower()]
-        if not filtered:
-            console.print(f"[yellow]No apps matched '{query}'. Try a shorter word.[/yellow]")
-            continue
-        if len(filtered) > 20:
-            console.print(
-                f"[yellow]{len(filtered)} matches — too many to list. "
-                f"Type more characters to narrow it down.[/yellow]"
-            )
-            continue
-        break
+        query = Prompt.ask("Filter (or Enter to browse)").strip().lower()
 
-    labels = []
-    for p in filtered:
-        short = ".".join(p.split(".")[-2:])
-        labels.append(f"{p}  [dim]({short})[/dim]")
+        if query:
+            filtered = [p for p in packages if query in p.lower()]
+            if not filtered:
+                console.print(f"[yellow]No apps matched '{query}'. Try a shorter word.[/yellow]")
+                continue
+            page = 0
+        else:
+            # plain Enter — keep current filtered list, advance page
+            pass
 
-    console.print("\n[bold]Select app:[/bold]")
-    idx = pick("App number", labels)
-    pkg = filtered[idx]
+        # Show current page
+        total_pages = max(1, (len(filtered) + _PAGE_SIZE - 1) // _PAGE_SIZE)
+        start = page * _PAGE_SIZE
+        end = min(start + _PAGE_SIZE, len(filtered))
+        page_items = filtered[start:end]
 
-    label = adb.get_app_label(device, pkg)
-    return pkg, label
+        page_info = f" [dim](page {page + 1}/{total_pages})[/dim]" if total_pages > 1 else ""
+        console.print(f"\n[bold]Apps {start + 1}–{end} of {len(filtered)}{page_info}:[/bold]")
+        for i, p in enumerate(page_items, start + 1):
+            short = ".".join(p.split(".")[-2:])
+            console.print(f"  [dim]{i:3}[/dim]  {p}  [dim]({short})[/dim]")
+
+        nav_hints = []
+        if end < len(filtered):
+            nav_hints.append("[dim][n] next page[/dim]")
+        if page > 0:
+            nav_hints.append("[dim][p] prev page[/dim]")
+        if nav_hints:
+            console.print("  " + "  ".join(nav_hints))
+
+        console.print()
+        raw = Prompt.ask("Enter app number (or n/p to page, or type to filter)").strip().lower()
+
+        if raw == "n":
+            if end < len(filtered):
+                page += 1
+            continue
+        if raw == "p":
+            if page > 0:
+                page -= 1
+            continue
+
+        # Numeric pick
+        try:
+            idx = int(raw) - 1
+            if 0 <= idx < len(filtered):
+                pkg = filtered[idx]
+                label = adb.get_app_label(device, pkg)
+                return pkg, label
+            console.print("[red]Number out of range.[/red]")
+            continue
+        except ValueError:
+            pass
+
+        # Treat non-numeric non-n/p input as a new filter query
+        if raw:
+            filtered = [p for p in packages if raw in p.lower()]
+            if not filtered:
+                console.print(f"[yellow]No apps matched '{raw}'.[/yellow]")
+                filtered = packages
+            page = 0
 
 
 # ── Main menu ─────────────────────────────────────────────────────────────────
