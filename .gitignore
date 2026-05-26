@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+*.pyc
+reports/screenshots/*.png
+tests/generated/
+data/*/flows.json
