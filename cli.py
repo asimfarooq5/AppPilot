@@ -237,7 +237,7 @@ def train_flow(device: str, package: str, label: str):
         ))
 
         # Interactive elements
-        interactive = [e for e in elements if e["clickable"] or
+        interactive = [e for e in elements if e["clickable"] or e["scrollable"] or
                        "edittext" in e["class"].lower()]
         if interactive:
             console.print(render_elements(elements))
@@ -273,6 +273,7 @@ def train_flow(device: str, package: str, label: str):
 def _print_action_help():
     console.print(
         "\n[dim]  <number>         tap element by index[/dim]\n"
+        "[dim]  <number> <text>  tap element then type text[/dim]\n"
         "[dim]  t <number>       tap element (same as number)[/dim]\n"
         "[dim]  type <text>      type text (use after tapping an input)[/dim]\n"
         "[dim]  clear            clear focused input field[/dim]\n"
@@ -300,9 +301,15 @@ def _handle_train_action(
     cmd = parts[0].lower()
     arg = parts[1] if len(parts) > 1 else ""
 
-    # Tap by number
-    if cmd.isdigit() or (cmd == "t" and arg.isdigit()):
-        idx_str = cmd if cmd.isdigit() else arg
+    # Tap by number: "N", "t N", "N text", "t N text"
+    if cmd.isdigit() or (cmd == "t" and arg and arg.split(None, 1)[0].isdigit()):
+        if cmd.isdigit():
+            idx_str = cmd
+            text_to_type = arg.strip().strip('"\'')
+        else:
+            t_parts = arg.split(None, 1)
+            idx_str = t_parts[0]
+            text_to_type = t_parts[1].strip().strip('"\'') if len(t_parts) > 1 else ""
         idx = int(idx_str) - 1
         if 0 <= idx < len(interactive):
             el = interactive[idx]
@@ -310,6 +317,10 @@ def _handle_train_action(
             recorder.tap(el)
             adb.tap(el["cx"], el["cy"], device)
             time.sleep(1.5)
+            if text_to_type:
+                console.print(f"  → type [cyan]{text_to_type!r}[/cyan]")
+                recorder.type_text(text_to_type)
+                adb.type_text(text_to_type, device)
         else:
             console.print(f"[red]No element #{idx_str}[/red]")
 
@@ -418,7 +429,7 @@ def run_flows(device: str, package: str, label: str):
     for flow_name, actions in targets:
         console.print(f"\n[cyan]Launching {label} for flow '[bold]{flow_name}[/bold]'…[/cyan]")
         adb.launch_app(package, device)
-        player = FlowPlayer(device, SCREENSHOT_DIR)
+        player = FlowPlayer(device, SCREENSHOT_DIR, log=console.print)
         ok = player.play(actions)
         results.append((flow_name, ok, player.failures))
 
