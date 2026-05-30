@@ -139,25 +139,53 @@ def _swipe_for_scroll(direction: str, steps: int, device: str) -> None:
 
 
 class FlowPlayer:
-    def __init__(self, device: str, screenshot_dir: Path):
+    def __init__(self, device: str, screenshot_dir: Path, log=None):
         self.device = device
         self.screenshot_dir = screenshot_dir
         self.screenshot_dir.mkdir(parents=True, exist_ok=True)
         self._step = 0
         self.failures: list[str] = []
+        self._log = log or print
 
     def play(self, actions: list[dict]) -> bool:
-        for action in actions:
+        total = len(actions)
+        for i, action in enumerate(actions, 1):
+            self._log(f"  [{i}/{total}] {self._describe(action)}")
             ok = self._dispatch(action)
             if not ok:
                 return False
         return True
 
+    def _describe(self, action: dict) -> str:
+        kind = action["action"]
+        if kind == "tap":
+            return f"tap [cyan]{action.get('label', '?')!r}[/cyan]"
+        if kind == "type":
+            return f"type [cyan]{action['text']!r}[/cyan]"
+        if kind == "clear":
+            return "clear field"
+        if kind == "scroll":
+            return f"scroll {action.get('direction', 'down')}"
+        if kind == "back":
+            return "back"
+        if kind == "home":
+            return "home"
+        if kind == "key":
+            return f"key {action.get('keycode', '')}"
+        if kind == "wait":
+            return f"wait {action.get('seconds', 1)}s"
+        if kind == "assert":
+            flag = "present" if action.get("present", True) else "absent"
+            return f"assert [cyan]{action.get('label', '?')!r}[/cyan] {flag}"
+        if kind == "screenshot":
+            return f"screenshot [dim]{action.get('name', '')!r}[/dim]"
+        return kind
+
     def _dispatch(self, action: dict) -> bool:
         kind = action["action"]
 
         if kind == "tap":
-            adb.tap(action["cx"], action["cy"], self.device)
+            self._smart_tap(action)
         elif kind == "type":
             adb.type_text(action["text"], self.device)
         elif kind == "clear":
@@ -179,6 +207,40 @@ class FlowPlayer:
             self._take_screenshot(action.get("name", "step"))
         return True
 
+    def _smart_tap(self, action: dict) -> None:
+        label = action.get("label", "")
+        cx, cy = action["cx"], action["cy"]
+
+        if label:
+            xml = adb.dump_ui(self.device)
+            elements = adb.parse_elements(xml)
+
+            # Exact label match first, then substring fallback
+            match = next((e for e in elements if e["label"] == label), None)
+            if not match:
+                match = next(
+                    (e for e in elements
+                     if label in e["label"] or e["label"] in label),
+                    None,
+                )
+
+            if match:
+                self._log(
+                    f"      [green]✓[/green] matched [cyan]{label!r}[/cyan] "
+                    f"at ({match['cx']},{match['cy']})"
+                )
+                adb.tap(match["cx"], match["cy"], self.device)
+                time.sleep(0.5)
+                return
+
+            self._log(
+                f"      [yellow]⚠[/yellow] [cyan]{label!r}[/cyan] not on screen "
+                f"— falling back to recorded ({cx},{cy})"
+            )
+
+        adb.tap(cx, cy, self.device)
+        time.sleep(0.5)
+
     def _check_assert(self, action: dict) -> bool:
         xml = adb.dump_ui(self.device)
         label = action["label"]
@@ -187,12 +249,15 @@ class FlowPlayer:
         if found != expected:
             msg = (f"Assert FAILED: '{label}' should be "
                    f"{'present' if expected else 'absent'} but was not")
+            self._log(f"      [red]✗[/red] {msg}")
             self.failures.append(msg)
             return False
+        self._log(f"      [green]✓[/green] assert '{label}' {('present' if expected else 'absent')}")
         return True
 
     def _take_screenshot(self, name: str) -> Path:
         self._step += 1
         path = self.screenshot_dir / f"{self._step:03d}_{name}.png"
         adb.screencap(path, self.device)
+        self._log(f"      [dim]saved: {path}[/dim]")
         return path
