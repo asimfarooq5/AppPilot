@@ -1,3 +1,5 @@
-# Android App Trainer
+# AppPilot
 
-Adaptive Android App Trainer │ │ Train flows for any Android app, then replay as pytest tests
+Autonomous Android Workflow Generation  
+From Screens to Smart Automation.
+Stop Writing Tests, Start Training Workflows.
